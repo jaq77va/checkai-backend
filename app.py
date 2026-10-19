@@ -22,17 +22,17 @@ def home():
     return jsonify({
         "status": "online",
         "service": "SportDataSense CheckAI API Engine",
-        "version": "1.0.0"
+        "version": "2.0.0"
     })
 
-# --- ENDPOINT 1: Caricamento Audio del Cliente ---
+# --- ENDPOINT 1: Upload Multiplo e Elaborazione IA Automatica ---
 @app.route("/api/upload", methods=["POST"])
 def upload_audio():
     try:
         token = request.form.get("token")
-        audio_file = request.files.get("audio")
+        audio_files = request.files.getlist("audio")
 
-        if not token or not audio_file:
+        if not token or not audio_files:
             return jsonify({"error": "Parametri mancanti (token o file audio)"}), 400
 
         # Verifica cliente tramite token
@@ -44,27 +44,61 @@ def upload_audio():
         coach_id = client_data["coach_id"]
         client_id = client_data["id"]
 
-        # Caricamento file nello storage di Supabase
-        file_bytes = audio_file.read()
-        file_name = f"checkin_{client_id}_{os.urandom(4).hex()}.wav"
-        
-        supabase.storage.from_("audio_checkins").upload(file_name, file_bytes, {"content-type": "audio/wav"})
-        audio_url = supabase.storage.from_("audio_checkins").get_public_url(file_name)
+        audio_urls = []
+        audio_parts = []
 
-        # Inserimento record nel DB
+        # Caricamento di tutti i file audio su Supabase Storage (fino a un massimo di 5)
+        for idx, audio_file in enumerate(audio_files[:5]):
+            file_bytes = audio_file.read()
+            file_name = f"checkin_{client_id}_{os.urandom(4).hex()}_{idx}.wav"
+            
+            supabase.storage.from_("audio_checkins").upload(file_name, file_bytes, {"content-type": "audio/wav"})
+            audio_url = supabase.storage.from_("audio_checkins").get_public_url(file_name)
+            audio_urls.append(audio_url)
+
+            # Prepara il file audio per l'analisi multimodale di Gemini
+            audio_parts.append(types.Part.from_bytes(data=file_bytes, mime_type="audio/wav"))
+
+        # Elaborazione automatica immediata con Gemini
+        ai_analysis = "Analisi non disponibile."
+        reply_draft = "Bozza di risposta non disponibile."
+
+        if client_ai and audio_parts:
+            prompt = """
+            Sei un assistente esperto in fisiologia e coaching per preparatori atletici e personal trainer.
+            Ascolta attentamente le registrazioni vocali inviate dal cliente e genera un report dettagliato e ordinato secondo i seguenti punti:
+            - Peso e Misure
+            - Aderenza Dieta
+            - Recupero e Sonno
+            - Criticità e Dolori
+            
+            Fornisci risposte chiare e concise. Includi infine una bozza di risposta motivazionale pronta da inviare via chat o email al cliente.
+            """
+
+            contents = [prompt] + audio_parts
+            response = client_ai.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=contents
+            )
+            ai_analysis = response.text
+            reply_draft = "Ciao! Ho ascoltato i tuoi aggiornamenti vocali. Ottimo lavoro questa settimana, continuiamo a spingere su questa strada."
+
+        # Inserimento record nel DB con tutti i campi pronti per il coach
         supabase.table("checkins").insert({
             "client_id": client_id,
             "coach_id": coach_id,
-            "audio_url": audio_url,
-            "status": "pending"
+            "audio_urls": audio_urls,
+            "ai_analysis": ai_analysis,
+            "reply_draft": reply_draft,
+            "status": "processed"
         }).execute()
 
-        return jsonify({"success": True, "message": "Check-in registrato con successo!"})
+        return jsonify({"success": True, "message": "Check-in inviato e analizzato con successo!"})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# --- ENDPOINT 2: Lista Check-in in sospeso per il Coach ---
+# --- ENDPOINT 2: Lista Check-in per il Coach (con IA già pronta) ---
 @app.route("/api/coach/checkins", methods=["GET"])
 def get_coach_checkins():
     coach_id = request.args.get("coach_id")
@@ -72,66 +106,12 @@ def get_coach_checkins():
         return jsonify({"error": "Parametro coach_id mancante"}), 400
 
     try:
-        response = supabase.table("checkins").select("*, clients(name)").eq("coach_id", coach_id).eq("status", "pending").execute()
-        return jsonify(response.data)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# --- ENDPOINT 3: Elaborazione Report & Bozza con Gemini ---
-@app.route("/api/coach/process", methods=["POST"])
-def process_checkin():
-    data = request.json or {}
-    checkin_id = data.get("checkin_id")
-    audio_url = data.get("audio_url")
-    clusters = data.get("clusters", [
-        "Peso e Misure", 
-        "Aderenza Dieta", 
-        "Recupero e Sonno", 
-        "Criticità e Dolori", 
-        "Bozza Risposta"
-    ])
-
-    if not checkin_id or not audio_url:
-        return jsonify({"error": "Parametri checkin_id o audio_url mancanti"}), 400
-
-    try:
-        # Scarica la traccia in locale temporaneo
-        temp_audio_path = "/tmp/temp_checkin.wav"
-        urllib.request.urlretrieve(audio_url, temp_audio_path)
-
-        with open(temp_audio_path, "rb") as f:
-            audio_bytes = f.read()
-
-        clusters_text = "\n".join([f"- **{c}**" for c in clusters])
-
-        prompt = f"""
-        Sei un assistente esperto in fisiologia e coaching per preparatori atletici e personal trainer.
-        Ascolta attentamente il vocale del cliente e genera un report dettagliato e ordinato secondo i seguenti punti richiesti:
-        
-        {clusters_text}
-
-        Fornisci risposte chiare, concise e sintetiche. Includi infine una bozza di risposta motivazionale pronta da inviare via chat o email al cliente.
-        """
-
-        # Chiamata al modello Gemini 3.8 Flash
-        response = client_ai.models.generate_content(
-            model='gemini-3.8-flash',
-            contents=[
-                prompt,
-                types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav")
-            ]
-        )
-
-        report_text = response.text
-
-        # Aggiorna lo stato nel DB
-        supabase.table("checkins").update({
-            "status": "processed",
-            "report": report_text
-        }).eq("id", checkin_id).execute()
-
-        return jsonify({"success": True, "report": report_text})
-
+        response = supabase.table("checkins") \
+            .select("*, clients(name)") \
+            .eq("coach_id", coach_id) \
+            .order("created_at", desc=True) \
+            .execute()
+        return jsonify(response.data), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
