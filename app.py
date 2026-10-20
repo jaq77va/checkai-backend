@@ -35,10 +35,9 @@ def home():
 # --- FUNZIONE DI SUPPORTO CON LOGGING DEI CLUSTER ---
 def get_coach_prompt(coach_id):
     clusters = []
-    logger.info(f"Ricerca cluster attivi a DB per il coach_id: {coach_id}")
+    logger.info(f"==> [AI PROMPT] Inizio recupero cluster ATTIVI (selected=true) per coach_id: {coach_id}")
     
     try:
-        # Recupera solo i cluster con selected = True per questo coach
         c_res = supabase.table("coach_clusters") \
             .select("cluster") \
             .eq("coach_id", coach_id) \
@@ -47,30 +46,32 @@ def get_coach_prompt(coach_id):
         
         if c_res.data:
             clusters = [row["cluster"] for row in c_res.data]
-            logger.info(f"Cluster attivi trovati per il coach {coach_id}: {clusters}")
+            logger.info(f"==> [AI PROMPT] Cluster ATTIVI trovati a DB: {clusters}")
         else:
-            logger.warning(f"Nessun cluster attivo trovato per il coach {coach_id}. Verrà usato il fallback.")
+            logger.warning(f"==> [AI PROMPT] Nessun cluster attivo con selected=true per il coach {coach_id}.")
             
     except Exception as e:
-        logger.error(f"Errore durante il recupero dei cluster per il coach {coach_id}: {str(e)}", exc_info=True)
+        logger.error(f"==> [AI PROMPT] Errore recupero cluster: {str(e)}", exc_info=True)
 
-    # Fallback predefinito se nessun cluster è selezionato nel DB
     if not clusters:
         clusters = ["Peso e Misure", "Aderenza Dieta", "Recupero e Sonno", "Criticità e Dolori"]
-        logger.info(f"Utilizzo cluster di fallback predefiniti: {clusters}")
 
     clusters_text = "\n".join([f"- {c}" for c in clusters])
 
+    # PROMPT RESTRITTIVO TASSATIVO
     prompt = f"""
     Sei un assistente esperto in fisiologia e coaching per preparatori atletici e personal trainer.
-    Ascolta attentamente le registrazioni vocali inviate dal cliente e genera un report dettagliato e ordinato secondo i seguenti punti richiesti dal coach:
-
+    
+    REGOLE TASSATIVE DI FORMATTAZIONE ED ESECUZIONE:
+    1. Analizza l'audio del cliente valutando ESCLUSIVAMENTE ed UNICAMENTE i seguenti punti richiesti dal coach:
     {clusters_text}
     
-    Fornisci risposte chiare e concise per ciascun punto. Includi infine una bozza di risposta motivazionale pronta da inviare via chat o email al cliente.
+    2. DIVIETO ASSOLUTO: NON aggiungere altri argomenti, categorie, sezioni o macro-aree non presenti nell'elenco sopra. Ignora completamente qualsiasi altro tema trattato dal cliente se non rientra nei punti sopra indicati.
+    3. Se nell'audio non ci sono informazioni relative a uno dei punti richiesti, scrivi semplicemente: "*Dato non pervenuto*".
+    4. Concludi infine con una breve bozza di risposta motivazionale pronta da inviare al cliente.
     """
     
-    logger.info(f"Prompt IA generato con successo per il coach {coach_id} con {len(clusters)} cluster attivi.")
+    logger.info(f"==> [AI PROMPT] Prompt finale inviato a Gemini:\n{prompt}")
     return prompt
 
 # --- ENDPOINT 1: Upload Multiplo e Elaborazione IA Automatica ---
