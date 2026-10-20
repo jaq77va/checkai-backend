@@ -9,6 +9,14 @@ from supabase import create_client, Client
 app = Flask(__name__)
 CORS(app)  # Permette le chiamate API dalle pagine WordPress / CheckAI
 
+# --- CONFIGURAZIONE LOGGING ---
+# Imposta il formato dei messaggi: [Data Ora] [Livello] [File:Linea] Messaggio
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s] %(levelname)s in %(module)s:%(lineno)d - %(message)s'
+)
+logger = app.logger
+
 # Inizializzazione Client API via Variabili d'Ambiente
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
@@ -112,6 +120,61 @@ def get_coach_checkins():
             .order("created_at", desc=True) \
             .execute()
         return jsonify(response.data), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# --- ENDPOINT 3: Lettura e Salvataggio Impostazioni Cluster Coach ---
+@app.route("/api/coach/settings", methods=["GET", "POST"])
+def manage_coach_settings():
+    logger.info(f"Ricevuta richiesta {request.method} su /api/coach/settings")
+    if request.method == "GET":
+        coach_id_param = request.args.get("coach_id")
+    else:
+        req_data = request.get_json(silent=True) or {}
+        coach_id_param = req_data.get("coach_id")
+
+    if not coach_id_param:
+        return jsonify({"error": "Parametro coach_id mancante"}), 400
+
+    try:
+        # Risolvi UUID reale del coach
+        coach_res = supabase.table("coaches") \
+            .select("id") \
+            .or_(f"code.eq.{coach_id_param},id.eq.{coach_id_param}") \
+            .execute()
+
+        if not coach_res.data:
+            return jsonify({"error": "Coach non trovato"}), 404
+
+        real_coach_id = coach_res.data[0]["id"]
+
+        if request.method == "GET":
+            res = supabase.table("coach_clusters") \
+                .select("cluster, selected") \
+                .eq("coach_id", real_coach_id) \
+                .execute()
+            
+            return jsonify({
+                "coach_id": real_coach_id, 
+                "clusters": res.data if res.data else []
+            }), 200
+
+        elif request.method == "POST":
+            req_data = request.get_json(silent=True) or {}
+            clusters_payload = req_data.get("clusters", [])
+
+            for item in clusters_payload:
+                supabase.table("coach_clusters").upsert({
+                    "coach_id": real_coach_id,
+                    "cluster": item["cluster"],
+                    "selected": item["selected"]
+                }, on_conflict="coach_id, cluster").execute()
+
+            return jsonify({
+                "success": True, 
+                "message": "Impostazioni aggiornate con successo!"
+            }), 200
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
