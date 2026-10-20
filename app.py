@@ -190,5 +190,80 @@ def manage_coach_settings():
         logger.error(f"Errore critico in manage_coach_settings: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+# --- ENDPOINT 4: Ri-analisi Check-in con Nuovi Cluster ---
+@app.route("/api/coach/reanalyze", methods=["POST"])
+def reanalyze_checkin():
+    req_data = request.get_json(silent=True) or {}
+    checkin_id = req_data.get("checkin_id")
+
+    if not checkin_id:
+        return jsonify({"error": "Parametro checkin_id mancante"}), 400
+
+    try:
+        # 1. Recupera il checkin dal DB
+        checkin_res = supabase.table("checkins").select("*").eq("id", checkin_id).execute()
+        if not checkin_res.data:
+            return jsonify({"error": "Check-in non trovato"}), 404
+
+        checkin = checkin_res.data[0]
+        coach_id = checkin["coach_id"]
+        audio_urls = checkin.get("audio_urls") or ([checkin.get("audio_url")] if checkin.get("audio_url") else [])
+
+        if not audio_urls:
+            return jsonify({"error": "Nessun file audio associato a questo check-in"}), 400
+
+        # 2. Recupera i file audio da Supabase Storage per Gemini
+        audio_parts = []
+        for url in audio_urls:
+            # Estrae il nome del file dall'URL di Supabase
+            file_name = url.split("/")[-1]
+            audio_bytes = supabase.storage.from_("audio_checkins").download(file_name)
+            audio_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"))
+
+        # 3. Leggi i cluster attivi aggiornati del coach
+        c_res = supabase.table("coach_clusters") \
+            .select("cluster") \
+            .eq("coach_id", coach_id) \
+            .eq("selected", True) \
+            .execute()
+        
+        clusters = [row["cluster"] for row in c_res.data] if c_res.data else ["Peso e Misure", "Aderenza Dieta", "Recupero e Sonno", "Criticità e Dolori"]
+        clusters_text = "\n".join([f"- {c}" for c in clusters])
+
+        # 4. Richiesta a Gemini con il nuovo prompt
+        prompt = f"""
+        Sei un assistente esperto in fisiologia e coaching per preparatori atletici e personal trainer.
+        Ascolta attentamente le registrazioni vocali inviate dal cliente e genera un report dettagliato e ordinato secondo i seguenti punti richiesti dal coach:
+
+        {clusters_text}
+
+        Fornisci risposte chiare e concise per ciascun punto. Includi infine una bozza di risposta motivazionale pronta da inviare via chat o email al cliente.
+        """
+
+        contents = [prompt] + audio_parts
+        response = client_ai.models.generate_content(
+            model='gemini-3.8-flash',
+            contents=contents
+        )
+        new_analysis = response.text
+        new_reply = "Ciao! Ho rianalizzato i tuoi aggiornamenti vocali con i nuovi parametri. Continuiamo a spingere su questa strada!"
+
+        # 5. Aggiorna il record nel DB
+        supabase.table("checkins").update({
+            "ai_analysis": new_analysis,
+            "reply_draft": new_reply
+        }).eq("id", checkin_id).execute()
+
+        logger.info(f"Check-in {checkin_id} rianalizzato con successo!")
+        return jsonify({
+            "success": True, 
+            "ai_analysis": new_analysis, 
+            "reply_draft": new_reply
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Errore ri-analisi: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+        
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
