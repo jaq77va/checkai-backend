@@ -29,12 +29,14 @@ def home():
     return jsonify({
         "status": "online",
         "service": "SportDataSense CheckAI API Engine",
-        "version": "2.1.0"
+        "version": "2.2.0"
     })
 
-# --- FUNZIONE DI SUPPORTO: Genera prompt basato sui cluster del coach ---
+# --- FUNZIONE DI SUPPORTO CON LOGGING DEI CLUSTER ---
 def get_coach_prompt(coach_id):
     clusters = []
+    logger.info(f"Ricerca cluster attivi a DB per il coach_id: {coach_id}")
+    
     try:
         # Recupera solo i cluster con selected = True per questo coach
         c_res = supabase.table("coach_clusters") \
@@ -42,14 +44,20 @@ def get_coach_prompt(coach_id):
             .eq("coach_id", coach_id) \
             .eq("selected", True) \
             .execute()
+        
         if c_res.data:
             clusters = [row["cluster"] for row in c_res.data]
+            logger.info(f"Cluster attivi trovati per il coach {coach_id}: {clusters}")
+        else:
+            logger.warning(f"Nessun cluster attivo trovato per il coach {coach_id}. Verrà usato il fallback.")
+            
     except Exception as e:
-        logger.error(f"Errore recupero cluster per coach {coach_id}: {str(e)}")
+        logger.error(f"Errore durante il recupero dei cluster per il coach {coach_id}: {str(e)}", exc_info=True)
 
     # Fallback predefinito se nessun cluster è selezionato nel DB
     if not clusters:
         clusters = ["Peso e Misure", "Aderenza Dieta", "Recupero e Sonno", "Criticità e Dolori"]
+        logger.info(f"Utilizzo cluster di fallback predefiniti: {clusters}")
 
     clusters_text = "\n".join([f"- {c}" for c in clusters])
 
@@ -61,26 +69,32 @@ def get_coach_prompt(coach_id):
     
     Fornisci risposte chiare e concise per ciascun punto. Includi infine una bozza di risposta motivazionale pronta da inviare via chat o email al cliente.
     """
+    
+    logger.info(f"Prompt IA generato con successo per il coach {coach_id} con {len(clusters)} cluster attivi.")
     return prompt
 
-# --- ENDPOINT 1: Upload Multiplo e Elaborazione IA Automatica con Cluster da DB ---
+# --- ENDPOINT 1: Upload Multiplo e Elaborazione IA Automatica ---
 @app.route("/api/upload", methods=["POST"])
 def upload_audio():
+    logger.info("Ricevuta richiesta POST su /api/upload")
     try:
         token = request.form.get("token")
         audio_files = request.files.getlist("audio")
 
         if not token or not audio_files:
+            logger.warning("Upload rifiutato: token o file audio mancanti.")
             return jsonify({"error": "Parametri mancanti (token o file audio)"}), 400
 
         # Verifica cliente tramite token
         client_res = supabase.table("clients").select("*").eq("token", token).execute()
         if not client_res.data:
+            logger.warning(f"Token cliente non valido: {token}")
             return jsonify({"error": "Token cliente non valido"}), 404
         
         client_data = client_res.data[0]
         coach_id = client_data["coach_id"]
         client_id = client_data["id"]
+        logger.info(f"Cliente identificato: ID {client_id} associato al coach ID {coach_id}")
 
         audio_urls = []
         audio_parts = []
@@ -94,16 +108,18 @@ def upload_audio():
             audio_url = supabase.storage.from_("audio_checkins").get_public_url(file_name)
             audio_urls.append(audio_url)
 
-            # Prepara il file audio per l'analisi multimodale di Gemini
             audio_parts.append(types.Part.from_bytes(data=file_bytes, mime_type="audio/wav"))
 
-        # Genera il prompt dinamico in base ai cluster salvati a DB per questo coach
+        logger.info(f"Caricati {len(audio_parts)} file audio su Supabase Storage per il check-in.")
+
+        # Genera il prompt dinamico con i cluster del coach
         prompt = get_coach_prompt(coach_id)
 
         ai_analysis = "Analisi non disponibile."
         reply_draft = "Bozza di risposta non disponibile."
 
         if client_ai and audio_parts:
+            logger.info("Invio dei dati audio e del prompt dinamico a Gemini...")
             contents = [prompt] + audio_parts
             response = client_ai.models.generate_content(
                 model='gemini-3.8-flash',
@@ -111,6 +127,7 @@ def upload_audio():
             )
             ai_analysis = response.text
             reply_draft = "Ciao! Ho ascoltato i tuoi aggiornamenti vocali. Ottimo lavoro questa settimana, continuiamo a spingere su questa strada."
+            logger.info("Analisi IA completata con successo tramite Gemini.")
 
         # Inserimento record nel DB
         supabase.table("checkins").insert({
@@ -122,16 +139,18 @@ def upload_audio():
             "status": "processed"
         }).execute()
 
+        logger.info("Check-in salvato correttamente nel database.")
         return jsonify({"success": True, "message": "Check-in inviato e analizzato con successo!"})
 
     except Exception as e:
-        logger.error(f"Errore durante l'upload: {str(e)}", exc_info=True)
+        logger.error(f"Errore critico durante l'upload: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 # --- ENDPOINT 2: Lista Check-in per il Coach ---
 @app.route("/api/coach/checkins", methods=["GET"])
 def get_coach_checkins():
     coach_id = request.args.get("coach_id")
+    logger.info(f"Richiesta get_coach_checkins per coach_id: {coach_id}")
     if not coach_id:
         return jsonify({"error": "Parametro coach_id mancante"}), 400
 
@@ -141,9 +160,11 @@ def get_coach_checkins():
             .eq("coach_id", coach_id) \
             .order("created_at", desc=True) \
             .execute()
+        
+        logger.info(f"Trovati {len(response.data if response.data else [])} check-in per il coach {coach_id}")
         return jsonify(response.data), 200
     except Exception as e:
-        logger.error(f"Errore get_coach_checkins: {str(e)}")
+        logger.error(f"Errore get_coach_checkins: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 # --- ENDPOINT 3: Lettura e Salvataggio Impostazioni Cluster Coach ---
@@ -166,6 +187,7 @@ def manage_coach_settings():
             .execute()
 
         if not coach_res.data:
+            logger.warning(f"Coach non trovato nel DB per ID: {coach_id_param}")
             return jsonify({"error": "Coach non trovato"}), 404
 
         real_coach_id = coach_res.data[0]["id"]
@@ -177,6 +199,7 @@ def manage_coach_settings():
                 .execute()
 
             cluster_list = res.data if res.data else []
+            logger.info(f"Restituiti {len(cluster_list)} cluster per il coach {real_coach_id}")
             return jsonify({
                 "coach_id": real_coach_id, 
                 "clusters": cluster_list
@@ -185,6 +208,7 @@ def manage_coach_settings():
         elif request.method == "POST":
             req_data = request.get_json(silent=True) or {}
             clusters_payload = req_data.get("clusters", [])
+            logger.info(f"Salvataggio impostazioni cluster per il coach {real_coach_id}. Dati in arrivo: {clusters_payload}")
 
             for item in clusters_payload:
                 supabase.table("coach_clusters").upsert({
@@ -193,6 +217,7 @@ def manage_coach_settings():
                     "selected": item["selected"]
                 }, on_conflict="coach_id, cluster").execute()
                 
+            logger.info(f"Cluster aggiornati con successo per il coach {real_coach_id}")
             return jsonify({
                 "success": True, 
                 "message": "Impostazioni aggiornate con successo!"
@@ -207,6 +232,7 @@ def manage_coach_settings():
 def reanalyze_checkin():
     req_data = request.get_json(silent=True) or {}
     checkin_id = req_data.get("checkin_id")
+    logger.info(f"Ricevuta richiesta di ri-analisi IA per il checkin_id: {checkin_id}")
 
     if not checkin_id:
         return jsonify({"error": "Parametro checkin_id mancante"}), 400
@@ -214,6 +240,7 @@ def reanalyze_checkin():
     try:
         checkin_res = supabase.table("checkins").select("*").eq("id", checkin_id).execute()
         if not checkin_res.data:
+            logger.warning(f"Check-in {checkin_id} non trovato per la ri-analisi.")
             return jsonify({"error": "Check-in non trovato"}), 404
 
         checkin = checkin_res.data[0]
@@ -221,19 +248,23 @@ def reanalyze_checkin():
         audio_urls = checkin.get("audio_urls") or ([checkin.get("audio_url")] if checkin.get("audio_url") else [])
 
         if not audio_urls:
+            logger.warning(f"Nessun file audio trovato per il check-in {checkin_id}")
             return jsonify({"error": "Nessun file audio associato a questo check-in"}), 400
 
-        # Scarica temporaneamente gli audio da Supabase Storage per ricreare le parti per Gemini
+        # Scarica i file audio da Supabase Storage
         audio_parts = []
         for url in audio_urls:
             file_name = url.split("/")[-1]
             audio_bytes = supabase.storage.from_("audio_checkins").download(file_name)
             audio_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"))
 
-        # Recupera il prompt aggiornato con i nuovi cluster a DB
+        logger.info(f"Scaricati {len(audio_parts)} file audio per la ri-analisi del check-in {checkin_id}")
+
+        # Recupera il prompt aggiornato con i nuovi cluster attivi salvati a DB
         prompt = get_coach_prompt(coach_id)
 
         if client_ai and audio_parts:
+            logger.info("Invio nuova richiesta a Gemini con i cluster aggiornati...")
             contents = [prompt] + audio_parts
             response = client_ai.models.generate_content(
                 model='gemini-3.8-flash',
@@ -247,6 +278,7 @@ def reanalyze_checkin():
                 "reply_draft": new_reply
             }).eq("id", checkin_id).execute()
 
+            logger.info(f"Check-in {checkin_id} rianalizzato e aggiornato con successo nel DB.")
             return jsonify({
                 "success": True, 
                 "ai_analysis": new_analysis, 
@@ -256,7 +288,7 @@ def reanalyze_checkin():
         return jsonify({"error": "Impossibile eseguire l'analisi IA"}), 500
 
     except Exception as e:
-        logger.error(f"Errore ri-analisi: {str(e)}", exc_info=True)
+        logger.error(f"Errore critico durante la ri-analisi: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
