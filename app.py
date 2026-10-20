@@ -69,13 +69,12 @@ def get_coach_prompt(coach_id):
     
     2. DIVIETO ASSOLUTO: NON aggiungere altri argomenti, categorie, sezioni o macro-aree non presenti nell'elenco sopra. Ignora completamente qualsiasi altro tema trattato dal cliente se non rientra nei punti sopra indicati.
     3. Se nell'audio non ci sono informazioni relative a uno dei punti richiesti, scrivi semplicemente: "*Dato non pervenuto*".
-    4. Concludi infine con una breve bozza di risposta motivazionale pronta da inviare al cliente.
+    4. Concludi INFINE separando la risposta con la riga esatta '---BOZZA_CLIENTE---' seguita da una breve bozza di risposta motivazionale diretta al cliente da inviare via chat/email.
     """
     
     logger.info(f"==> [AI PROMPT] Prompt finale inviato a Gemini:\n{prompt}")
     return prompt
 
-# --- ENDPOINT 1: Upload Multiplo e Elaborazione IA Automatica ---
 @app.route("/api/upload", methods=["POST"])
 def upload_audio():
     logger.info("Ricevuta richiesta POST su /api/upload")
@@ -127,9 +126,19 @@ def upload_audio():
                 model='gemini-3.8-flash',
                 contents=contents
             )
-            ai_analysis = response.text
-            reply_draft = "Ciao! Ho ascoltato i tuoi aggiornamenti vocali. Ottimo lavoro questa settimana, continuiamo a spingere su questa strada."
-            logger.info("Analisi IA completata con successo tramite Gemini.")
+            
+            full_text = response.text or ""
+
+            # Separazione dell'analisi tecnica dalla bozza per il cliente
+            if "---BOZZA_CLIENTE---" in full_text:
+                parts = full_text.split("---BOZZA_CLIENTE---")
+                ai_analysis = parts[0].strip()
+                reply_draft = parts[1].strip()
+            else:
+                ai_analysis = full_text.strip()
+                reply_draft = "Ciao! Ho ascoltato i tuoi aggiornamenti vocali. Ottimo lavoro questa settimana, continuiamo a spingere su questa strada!"
+
+            logger.info("Analisi IA completata e separata con successo tramite Gemini.")
 
         # Inserimento record nel DB
         supabase.table("checkins").insert({
@@ -283,10 +292,19 @@ def reanalyze_checkin():
                     model='gemini-3.8-flash',
                     contents=contents
                 )
-                new_analysis = response.text
-                new_reply = "Ciao! Ho rianalizzato i tuoi aggiornamenti vocali in base ai nuovi parametri stabiliti."
+                
+                full_text = response.text or ""
 
-                # Aggiorna il DB
+                # Separazione dell'analisi tecnica dalla bozza per il cliente
+                if "---BOZZA_CLIENTE---" in full_text:
+                    parts = full_text.split("---BOZZA_CLIENTE---")
+                    new_analysis = parts[0].strip()
+                    new_reply = parts[1].strip()
+                else:
+                    new_analysis = full_text.strip()
+                    new_reply = "Ciao! Ho rianalizzato i tuoi aggiornamenti vocali. Proseguiamo così verso i nostri obiettivi!"
+
+                # Aggiorna il DB salvando separatamente i due blocchi
                 supabase.table("checkins").update({
                     "ai_analysis": new_analysis,
                     "reply_draft": new_reply
