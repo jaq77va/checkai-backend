@@ -159,6 +159,9 @@ def manage_coach_settings():
                 .select("cluster, selected") \
                 .eq("coach_id", real_coach_id) \
                 .execute()
+
+            cluster_list = res.data if res.data else []
+            logger.info(f"Trovati {len(cluster_list)} cluster per il coach {real_coach_id}")
             
             return jsonify({
                 "coach_id": real_coach_id, 
@@ -176,8 +179,7 @@ def manage_coach_settings():
                     "selected": item["selected"]
                 }, on_conflict="coach_id, cluster").execute()
                 
-            logger.info(f"Trovati {len(res.data if res.data else [])} cluster per il coach")
-            
+            logger.info(f"Impostazioni cluster aggiornate con successo per il coach {real_coach_id}")
             return jsonify({
                 "success": True, 
                 "message": "Impostazioni aggiornate con successo!"
