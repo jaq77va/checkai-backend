@@ -324,6 +324,38 @@ def reanalyze_checkin():
         logger.error(f"==> [REANALYZE ALL] Errore critico durante la ri-analisi globale: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
+# --- ENDPOINT: Eliminazione di un singolo Check-in e relativi audio ---
+@app.route("/api/coach/checkin/<checkin_id>", methods=["DELETE"])
+def delete_checkin(checkin_id):
+    logger.info(f"==> [DELETE CHECKIN] Richiesta eliminazione per check-in ID: {checkin_id}")
+    try:
+        # 1. Recupera il check-in per trovare i file audio associati
+        res = supabase.table("checkins").select("*").eq("id", checkin_id).execute()
+        if not res.data:
+            return jsonify({"error": "Check-in non trovato"}), 404
+        
+        checkin_data = res.data[0]
+        audio_urls = checkin_data.get("audio_urls") or ([checkin_data.get("audio_url")] if checkin_data.get("audio_url") else [])
+
+        # 2. Elimina i file audio da Supabase Storage
+        for url in audio_urls:
+            if url:
+                file_name = url.split("/")[-1]
+                try:
+                    supabase.storage.from_("audio_checkins").remove([file_name])
+                    logger.info(f"File audio eliminato dallo storage: {file_name}")
+                except Exception as storage_err:
+                    logger.error(f"Errore eliminazione file storage {file_name}: {str(storage_err)}")
+
+        # 3. Elimina il record dalla tabella checkins
+        supabase.table("checkins").delete().eq("id", checkin_id).execute()
+        logger.info(f"Check-in {checkin_id} eliminato con successo dal database.")
+
+        return jsonify({"success": True, "message": "Check-in eliminato con successo!"}), 200
+
+    except Exception as e:
+        logger.error(f"==> [DELETE CHECKIN] Errore critico: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
