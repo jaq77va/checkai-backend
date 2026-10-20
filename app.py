@@ -54,6 +54,7 @@ def get_coach_prompt(coach_id):
         logger.error(f"==> [AI PROMPT] Errore recupero cluster: {str(e)}", exc_info=True)
 
     if not clusters:
+        logger.info(f"==> [AI PROMPT] NOT CLUSTER ALLORA SCRIVO I 4 FISSI")
         clusters = ["Peso e Misure", "Aderenza Dieta", "Recupero e Sonno", "Criticità e Dolori"]
 
     clusters_text = "\n".join([f"- {c}" for c in clusters])
@@ -233,67 +234,77 @@ def manage_coach_settings():
         logger.error(f"Errore in manage_coach_settings: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# --- ENDPOINT 4: Ri-analisi Check-in Esistente con i soli Cluster Attivi ---
+# --- ENDPOINT 4: Ri-analisi di TUTTI i Check-in del Coach con i soli Cluster Attivi ---
 @app.route("/api/coach/reanalyze", methods=["POST"])
 def reanalyze_checkin():
     req_data = request.get_json(silent=True) or {}
-    checkin_id = req_data.get("checkin_id")
-    logger.info(f"==> [REANALYZE] Ricevuta richiesta di ri-analisi per il checkin_id: {checkin_id}")
+    coach_id = req_data.get("coach_id")
+    logger.info(f"==> [REANALYZE ALL] Ricevuta richiesta di ri-analisi globale per coach_id: {coach_id}")
 
-    if not checkin_id:
-        return jsonify({"error": "Parametro checkin_id mancante"}), 400
+    if not coach_id:
+        return jsonify({"error": "Parametro coach_id mancante"}), 400
 
     try:
-        # 1. Recupera il check-in dal database
-        checkin_res = supabase.table("checkins").select("*").eq("id", checkin_id).execute()
-        if not checkin_res.data:
-            return jsonify({"error": "Check-in non trovato"}), 404
+        # 1. Recupera TUTTI i check-in del coach
+        checkins_res = supabase.table("checkins").select("*").eq("coach_id", coach_id).execute()
+        if not checkins_res.data:
+            return jsonify({"error": "Nessun check-in trovato per questo coach"}), 404
 
-        checkin = checkin_res.data[0]
-        coach_id = checkin["coach_id"]
-        audio_urls = checkin.get("audio_urls") or ([checkin.get("audio_url")] if checkin.get("audio_url") else [])
+        checkins_list = checkins_res.data
+        logger.info(f"==> [REANALYZE ALL] Trovati {len(checkins_list)} check-in da ri-analizzare per il coach {coach_id}.")
 
-        if not audio_urls:
-            return jsonify({"error": "Nessun file audio associato a questo check-in"}), 400
-
-        # 2. Scarica i file audio da Supabase Storage
-        audio_parts = []
-        for url in audio_urls:
-            file_name = url.split("/")[-1]
-            audio_bytes = supabase.storage.from_("audio_checkins").download(file_name)
-            audio_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"))
-
-        # 3. RICHIAMA IL PROMPT DINAMICO: Prende SOLO i cluster con selected = true
+        # 2. Recupera il prompt con le REGOLE TASSATIVE sui soli cluster attivi (selected=true)
         prompt = get_coach_prompt(coach_id)
 
-        if client_ai and audio_parts:
-            logger.info(f"==> [REANALYZE] Invio audio a Gemini per il coach {coach_id} con i cluster attivi aggiornati...")
-            contents = [prompt] + audio_parts
-            response = client_ai.models.generate_content(
-                model='gemini-3.8-flash',
-                contents=contents
-            )
-            new_analysis = response.text
-            new_reply = "Ciao! Ho rianalizzato i tuoi aggiornamenti vocali concentrandomi sui nuovi parametri richiesti."
+        processed_count = 0
 
-            # 4. Sovrascrive l'analisi nel database
-            supabase.table("checkins").update({
-                "ai_analysis": new_analysis,
-                "reply_draft": new_reply
-            }).eq("id", checkin_id).execute()
+        # 3. Cicla su ciascun check-in e ri-elabora con Gemini
+        for checkin in checkins_list:
+            checkin_id = checkin["id"]
+            audio_urls = checkin.get("audio_urls") or ([checkin.get("audio_url")] if checkin.get("audio_url") else [])
 
-            logger.info(f"==> [REANALYZE] Check-in {checkin_id} rianalizzato con successo!")
-            return jsonify({
-                "success": True, 
-                "ai_analysis": new_analysis, 
-                "reply_draft": new_reply
-            }), 200
+            if not audio_urls:
+                logger.warning(f"Check-in {checkin_id} ignorato: nessun file audio trovato.")
+                continue
 
-        return jsonify({"error": "Impossibile eseguire l'analisi IA"}), 500
+            audio_parts = []
+            for url in audio_urls:
+                file_name = url.split("/")[-1]
+                try:
+                    audio_bytes = supabase.storage.from_("audio_checkins").download(file_name)
+                    audio_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"))
+                except Exception as err:
+                    logger.error(f"Errore nel download dell'audio {file_name}: {str(err)}")
+
+            if client_ai and audio_parts:
+                logger.info(f"Ri-analisi in corso per check-in {checkin_id} ({len(audio_parts)} audio)...")
+                contents = [prompt] + audio_parts
+                response = client_ai.models.generate_content(
+                    model='gemini-3.8-flash',
+                    contents=contents
+                )
+                new_analysis = response.text
+                new_reply = "Ciao! Ho rianalizzato i tuoi aggiornamenti vocali in base ai nuovi parametri stabiliti."
+
+                # Aggiorna il DB
+                supabase.table("checkins").update({
+                    "ai_analysis": new_analysis,
+                    "reply_draft": new_reply
+                }).eq("id", checkin_id).execute()
+
+                processed_count += 1
+
+        logger.info(f"==> [REANALYZE ALL] Completata la ri-analisi di {processed_count} check-in per il coach {coach_id}.")
+        return jsonify({
+            "success": True, 
+            "message": f"Rigenerate con successo {processed_count} analisi!",
+            "processed_count": processed_count
+        }), 200
 
     except Exception as e:
-        logger.error(f"==> [REANALYZE] Errore critico: {str(e)}", exc_info=True)
+        logger.error(f"==> [REANALYZE ALL] Errore critico durante la ri-analisi globale: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
