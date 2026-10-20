@@ -193,13 +193,18 @@ def manage_coach_settings():
         real_coach_id = coach_res.data[0]["id"]
         
         if request.method == "GET":
+            # 1. Recupera tutti i cluster (per popolare le checkbox)
             res = supabase.table("coach_clusters") \
                 .select("cluster, selected") \
                 .eq("coach_id", real_coach_id) \
                 .execute()
 
             cluster_list = res.data if res.data else []
-            logger.info(f"Restituiti {len(cluster_list)} cluster per il coach {real_coach_id}")
+
+            # 2. FILTRA E LOGGA SUBITO QUALI SONO A TRUE (ATTIVI)
+            active_clusters = [item["cluster"] for item in cluster_list if item.get("selected") == True]
+            logger.info(f"==> [LOGIN COACH] Il coach {real_coach_id} si è loggato. Cluster ATTIVI (true): {active_clusters} (Totale attivi: {len(active_clusters)})")
+           
             return jsonify({
                 "coach_id": real_coach_id, 
                 "clusters": cluster_list
