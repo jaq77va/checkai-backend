@@ -144,7 +144,7 @@ def manage_coach_settings():
         # Risolvi UUID reale del coach
         coach_res = supabase.table("coaches") \
             .select("id") \
-            .or_(f"code.eq.{coach_id_param},id.eq.{coach_id_param}") \
+            .eq("id", coach_id_param) \
             .execute()
 
         if not coach_res.data:
@@ -177,6 +177,7 @@ def manage_coach_settings():
                 }, on_conflict="coach_id, cluster").execute()
                 
             logger.info(f"Trovati {len(res.data if res.data else [])} cluster per il coach")
+            
             return jsonify({
                 "success": True, 
                 "message": "Impostazioni aggiornate con successo!"
