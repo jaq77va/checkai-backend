@@ -133,8 +133,11 @@ def manage_coach_settings():
     else:
         req_data = request.get_json(silent=True) or {}
         coach_id_param = req_data.get("coach_id")
-
+        
+    logger.info(f"Parametro coach_id ricevuto: {coach_id_param}")
+    
     if not coach_id_param:
+        logger.warning("Richiesta respinta: parametro coach_id mancante")
         return jsonify({"error": "Parametro coach_id mancante"}), 400
 
     try:
@@ -145,10 +148,12 @@ def manage_coach_settings():
             .execute()
 
         if not coach_res.data:
+            logger.warning(f"Coach non trovato nel DB per ID/Code: {coach_id_param}")
             return jsonify({"error": "Coach non trovato"}), 404
 
         real_coach_id = coach_res.data[0]["id"]
-
+        logger.info(f"Coach identificato con UUID: {real_coach_id}")
+        
         if request.method == "GET":
             res = supabase.table("coach_clusters") \
                 .select("cluster, selected") \
@@ -170,13 +175,16 @@ def manage_coach_settings():
                     "cluster": item["cluster"],
                     "selected": item["selected"]
                 }, on_conflict="coach_id, cluster").execute()
-
+                
+            logger.info(f"Trovati {len(res.data if res.data else [])} cluster per il coach")
             return jsonify({
                 "success": True, 
                 "message": "Impostazioni aggiornate con successo!"
             }), 200
 
     except Exception as e:
+        # Registra l'errore completo con tanto di stracktrace nel log di Render
+        logger.error(f"Errore critico in manage_coach_settings: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
