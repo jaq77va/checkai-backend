@@ -126,7 +126,7 @@ def upload_audio():
                 model='gemini-3.8-flash',
                 contents=contents
             )
-            logger.info(f"==> [AI PROMPT] UPLOAD response.text: {response.text}")
+           
             full_text = response.text or ""
             logger.info(f"==> [AI PROMPT] UPLOAD full_text: {full_text}")
             
