@@ -126,9 +126,9 @@ def upload_audio():
                 model='gemini-3.8-flash',
                 contents=contents
             )
-            logger.info(f"==> [AI PROMPT] UPLOAD response.text  " {response.text } )
+            logger.info(f"==> [AI PROMPT] UPLOAD response.text: {response.text}")
             full_text = response.text or ""
-            logger.info(f"==> [AI PROMPT] UPLOAD full_text " {full_text} )
+            logger.info(f"==> [AI PROMPT] UPLOAD full_text: {full_text}")
             
             # Separazione dell'analisi tecnica dalla bozza per il cliente
             if "---BOZZA_CLIENTE---" in full_text:
