@@ -232,20 +232,20 @@ def manage_coach_settings():
         logger.error(f"Errore in manage_coach_settings: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# --- ENDPOINT 4: Ri-analisi Check-in Esistente con Nuovi Cluster ---
+# --- ENDPOINT 4: Ri-analisi Check-in Esistente con i soli Cluster Attivi ---
 @app.route("/api/coach/reanalyze", methods=["POST"])
 def reanalyze_checkin():
     req_data = request.get_json(silent=True) or {}
     checkin_id = req_data.get("checkin_id")
-    logger.info(f"Ricevuta richiesta di ri-analisi IA per il checkin_id: {checkin_id}")
+    logger.info(f"==> [REANALYZE] Ricevuta richiesta di ri-analisi per il checkin_id: {checkin_id}")
 
     if not checkin_id:
         return jsonify({"error": "Parametro checkin_id mancante"}), 400
 
     try:
+        # 1. Recupera il check-in dal database
         checkin_res = supabase.table("checkins").select("*").eq("id", checkin_id).execute()
         if not checkin_res.data:
-            logger.warning(f"Check-in {checkin_id} non trovato per la ri-analisi.")
             return jsonify({"error": "Check-in non trovato"}), 404
 
         checkin = checkin_res.data[0]
@@ -253,37 +253,35 @@ def reanalyze_checkin():
         audio_urls = checkin.get("audio_urls") or ([checkin.get("audio_url")] if checkin.get("audio_url") else [])
 
         if not audio_urls:
-            logger.warning(f"Nessun file audio trovato per il check-in {checkin_id}")
             return jsonify({"error": "Nessun file audio associato a questo check-in"}), 400
 
-        # Scarica i file audio da Supabase Storage
+        # 2. Scarica i file audio da Supabase Storage
         audio_parts = []
         for url in audio_urls:
             file_name = url.split("/")[-1]
             audio_bytes = supabase.storage.from_("audio_checkins").download(file_name)
             audio_parts.append(types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"))
 
-        logger.info(f"Scaricati {len(audio_parts)} file audio per la ri-analisi del check-in {checkin_id}")
-
-        # Recupera il prompt aggiornato con i nuovi cluster attivi salvati a DB
+        # 3. RICHIAMA IL PROMPT DINAMICO: Prende SOLO i cluster con selected = true
         prompt = get_coach_prompt(coach_id)
 
         if client_ai and audio_parts:
-            logger.info("Invio nuova richiesta a Gemini con i cluster aggiornati...")
+            logger.info(f"==> [REANALYZE] Invio audio a Gemini per il coach {coach_id} con i cluster attivi aggiornati...")
             contents = [prompt] + audio_parts
             response = client_ai.models.generate_content(
                 model='gemini-3.8-flash',
                 contents=contents
             )
             new_analysis = response.text
-            new_reply = "Ciao! Ho rianalizzato i tuoi aggiornamenti vocali in base ai nuovi parametri. Continuiamo così!"
+            new_reply = "Ciao! Ho rianalizzato i tuoi aggiornamenti vocali concentrandomi sui nuovi parametri richiesti."
 
+            # 4. Sovrascrive l'analisi nel database
             supabase.table("checkins").update({
                 "ai_analysis": new_analysis,
                 "reply_draft": new_reply
             }).eq("id", checkin_id).execute()
 
-            logger.info(f"Check-in {checkin_id} rianalizzato e aggiornato con successo nel DB.")
+            logger.info(f"==> [REANALYZE] Check-in {checkin_id} rianalizzato con successo!")
             return jsonify({
                 "success": True, 
                 "ai_analysis": new_analysis, 
@@ -293,7 +291,7 @@ def reanalyze_checkin():
         return jsonify({"error": "Impossibile eseguire l'analisi IA"}), 500
 
     except Exception as e:
-        logger.error(f"Errore critico durante la ri-analisi: {str(e)}", exc_info=True)
+        logger.error(f"==> [REANALYZE] Errore critico: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
