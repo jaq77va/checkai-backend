@@ -93,7 +93,7 @@ def admin_delete_cluster(cluster_id):
 
 # ------------------------ 4. AGGIORNA ASSOCIAZIONI COACH <-> CLUSTER --------------------------
 @app.route("/api/admin/coach-clusters", methods=["POST"])
-def admin_update_coach_clusters():
+def ():
     try:
         data = request.json
         coach_id = data.get("coach_id")
@@ -460,30 +460,6 @@ def admin_get_coaches():
         logger.error(f"Errore recupero coach per admin: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# --- ENDPOINT ADMIN: Aggiornamento cluster per un coach ---
-@app.route("/api/admin/coach-clusters", methods=["POST"])
-def admin_update_coach_clusters():
-    try:
-        data = request.json
-        coach_id = data.get("coach_id")
-        selected_clusters = data.get("clusters", []) # Lista di stringhe (es. ["Recupero", "Carico"])
-
-        if not coach_id:
-            return jsonify({"error": "ID coach mancante"}), 400
-
-        # 1. Rimuovi i vecchi cluster per questo coach
-        supabase.table("coach_clusters").delete().eq("coach_id", coach_id).execute()
-
-        # 2. Inserisci i nuovi cluster selezionati
-        if selected_clusters:
-            insert_data = [{"coach_id": coach_id, "cluster_name": c} for c in selected_clusters]
-            supabase.table("coach_clusters").insert(insert_data).execute()
-
-        logger.info(f"Cluster aggiornati con successo per il coach ID {coach_id}")
-        return jsonify({"success": True, "message": "Cluster aggiornati con successo!"})
-    except Exception as e:
-        logger.error(f"Errore aggiornamento cluster coach: {str(e)}", exc_info=True)
-        return jsonify({"error": str(e)}), 500
         
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
