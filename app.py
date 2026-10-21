@@ -39,11 +39,13 @@ def admin_get_data():
         # Recupera tutti i cluster dalla tabella master 'clusters'
         clusters_res = supabase.table("clusters").select("*").order("id").execute()
         clusters = clusters_res.data or []
-    
+
+        logger.info(f"Elenco cluster recuperati dal database: {clusters}")
+        
         # Recupera tutti i coach
         coaches_res = supabase.table("coaches").select("*").execute()
         coaches = coaches_res.data or []
-
+        
         # Per ogni coach, recupera la lista di cluster_id attualmente associati
         for coach in coaches:
             assoc_res = supabase.table("coach_clusters").select("cluster_id").eq("coach_id", coach["id"]).execute()
