@@ -39,7 +39,7 @@ def admin_get_data():
         # Recupera tutti i cluster dalla tabella master 'clusters'
         clusters_res = supabase.table("clusters").select("*").order("id").execute()
         clusters = clusters_res.data or []
-
+    
         # Recupera tutti i coach
         coaches_res = supabase.table("coaches").select("*").execute()
         coaches = coaches_res.data or []
