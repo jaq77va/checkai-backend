@@ -32,7 +32,89 @@ def home():
         "version": "2.2.0"
     })
 
-# --- FUNZIONE DI SUPPORTO CON LOGGING DEI CLUSTER ---
+# ------------------------ 1. OTTIENI TUTTI I DATI ADMIN (Cluster + Coach con relative associazioni) ------------------------
+@app.route("/api/admin/data", methods=["GET"])
+def admin_get_data():
+    try:
+        # Recupera tutti i cluster dalla tabella master 'clusters'
+        clusters_res = supabase.table("clusters").select("*").order("id").execute()
+        clusters = clusters_res.data or []
+
+        # Recupera tutti i coach
+        coaches_res = supabase.table("coaches").select("*").execute()
+        coaches = coaches_res.data or []
+
+        # Per ogni coach, recupera la lista di cluster_id attualmente associati
+        for coach in coaches:
+            assoc_res = supabase.table("coach_clusters").select("cluster_id").eq("coach_id", coach["id"]).execute()
+            coach["cluster_ids"] = [item["cluster_id"] for item in assoc_res.data]
+
+        return jsonify({
+            "success": True,
+            "clusters": clusters,
+            "coaches": coaches
+        })
+    except Exception as e:
+        logger.error(f"Errore recupero dati admin: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+
+# ------------------------ 2. CREA UN NUOVO CLUSTER -----------------------------
+@app.route("/api/admin/clusters", methods=["POST"])
+def admin_create_cluster():
+    try:
+        data = request.json
+        name = data.get("name", "").strip()
+        description = data.get("description", "").strip()
+
+        if not name:
+            return jsonify({"error": "Il nome del cluster è obbligatorio."}), 400
+
+        # Inserimento nel database
+        res = supabase.table("clusters").insert({"name": name, "description": description}).execute()
+        return jsonify({"success": True, "data": res.data})
+    except Exception as e:
+        logger.error(f"Errore creazione cluster: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+# -------------------------------------------------------------------------------------        
+
+# ------------------------ 3. ELIMINA UN CLUSTER --------------------------------------
+@app.route("/api/admin/clusters/<int:cluster_id>", methods=["DELETE"])
+def admin_delete_cluster(cluster_id):
+    try:
+        # La cancellazione in cascata su Postgres eliminerà in automatico le associazioni in coach_clusters
+        supabase.table("clusters").delete().eq("id", cluster_id).execute()
+        return jsonify({"success": True, "message": "Cluster eliminato con successo."})
+    except Exception as e:
+        logger.error(f"Errore eliminazione cluster {cluster_id}: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+# ---------------------------------------------------------------------------------------------- 
+
+# ------------------------ 4. AGGIORNA ASSOCIAZIONI COACH <-> CLUSTER --------------------------
+@app.route("/api/admin/coach-clusters", methods=["POST"])
+def admin_update_coach_clusters():
+    try:
+        data = request.json
+        coach_id = data.get("coach_id")
+        selected_cluster_ids = data.get("cluster_ids", [])  # Lista degli ID selezionati
+
+        if not coach_id:
+            return jsonify({"error": "ID coach mancante."}), 400
+
+        # 1. Rimuovi tutte le vecchie associazioni per questo coach
+        supabase.table("coach_clusters").delete().eq("coach_id", coach_id).execute()
+
+        # 2. Inserisci le nuove righe per i cluster selezionati (se ce ne sono)
+        if selected_cluster_ids:
+            new_rows = [{"coach_id": coach_id, "cluster_id": c_id} for c_id in selected_cluster_ids]
+            supabase.table("coach_clusters").insert(new_rows).execute()
+
+        return jsonify({"success": True, "message": "Associazioni aggiornate con successo."})
+    except Exception as e:
+        logger.error(f"Errore aggiornamento associazioni coach: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+# ---------------------------------------------------------------------------------------------- 
+
+# ------------------------ FUNZIONE DI SUPPORTO CON LOGGING DEI CLUSTER ------------------------
 def get_coach_prompt(coach_id):
     clusters = []
     logger.info(f"==> [AI PROMPT] Inizio recupero cluster ATTIVI (selected=true) per coach_id: {coach_id}")
@@ -74,6 +156,7 @@ def get_coach_prompt(coach_id):
     
     logger.info(f"==> [AI PROMPT] Prompt finale inviato a Gemini:\n{prompt}")
     return prompt
+# -------------------------------------------------------------------------------------
 
 @app.route("/api/upload", methods=["POST"])
 def upload_audio():
