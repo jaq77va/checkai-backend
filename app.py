@@ -265,68 +265,71 @@ def get_coach_checkins():
         return jsonify({"error": str(e)}), 500
 
 # --- ENDPOINT 3: Lettura e Salvataggio Impostazioni Cluster Coach ---
-@app.route("/api/coach/settings", methods=["GET", "POST"])
-def manage_coach_settings():
-    logger.info(f"Ricevuta richiesta {request.method} su /api/coach/settings")
-    if request.method == "GET":
-        coach_id_param = request.args.get("coach_id")
-    else:
-        req_data = request.get_json(silent=True) or {}
-        coach_id_param = req_data.get("coach_id")
-        
-    if not coach_id_param:
-        return jsonify({"error": "Parametro coach_id mancante"}), 400
-
+@app.route("/api/coach/settings", methods=["GET"])
+def get_coach_settings():
     try:
-        coach_res = supabase.table("coaches") \
-            .select("id") \
-            .eq("id", coach_id_param) \
-            .execute()
+        coach_id = request.args.get("coach_id")
+        if not coach_id:
+            return jsonify({"error": "ID coach mancante"}), 400
 
-        if not coach_res.data:
-            logger.warning(f"Coach non trovato nel DB per ID: {coach_id_param}")
-            return jsonify({"error": "Coach non trovato"}), 404
+        # 1. Recupera tutti i cluster disponibili nella tabella master
+        clusters_res = supabase.table("clusters").select("*").order("id").execute()
+        all_clusters = clusters_res.data or []
 
-        real_coach_id = coach_res.data[0]["id"]
-        
-        if request.method == "GET":
-            # 1. Recupera tutti i cluster (per popolare le checkbox)
-            res = supabase.table("coach_clusters") \
-                .select("cluster, selected") \
-                .eq("coach_id", real_coach_id) \
-                .execute()
+        # 2. Recupera gli ID dei cluster associati a questo coach
+        assoc_res = supabase.table("coach_clusters").select("cluster_id").eq("coach_id", coach_id).execute()
+        associated_cluster_ids = [item["cluster_id"] for item in (assoc_res.data or [])]
 
-            cluster_list = res.data if res.data else []
+        # 3. Costruisci la lista indicando per ciascuno se è selezionato per questo coach
+        result_clusters = []
+        for cluster in all_clusters:
+            result_clusters.append({
+                "cluster_id": cluster["id"],
+                "cluster": cluster["name"], # Mantiene la chiave 'cluster' attesa dal frontend
+                "selected": cluster["id"] in associated_cluster_ids
+            })
 
-            # 2. FILTRA E LOGGA SUBITO QUALI SONO A TRUE (ATTIVI)
-            active_clusters = [item["cluster"] for item in cluster_list if item.get("selected") == True]
-            logger.info(f"==> [LOGIN COACH] Il coach {real_coach_id} si è loggato. Cluster ATTIVI (true): {active_clusters} (Totale attivi: {len(active_clusters)})")
-           
-            return jsonify({
-                "coach_id": real_coach_id, 
-                "clusters": cluster_list
-            }), 200
-
-        elif request.method == "POST":
-            req_data = request.get_json(silent=True) or {}
-            clusters_payload = req_data.get("clusters", [])
-            logger.info(f"Salvataggio impostazioni cluster per il coach {real_coach_id}. Dati in arrivo: {clusters_payload}")
-
-            for item in clusters_payload:
-                supabase.table("coach_clusters").upsert({
-                    "coach_id": real_coach_id,
-                    "cluster": item["cluster"],
-                    "selected": item["selected"]
-                }, on_conflict="coach_id, cluster").execute()
-                
-            logger.info(f"Cluster aggiornati con successo per il coach {real_coach_id}")
-            return jsonify({
-                "success": True, 
-                "message": "Impostazioni aggiornate con successo!"
-            }), 200
-
+        return jsonify({
+            "success": True,
+            "clusters": result_clusters
+        })
     except Exception as e:
-        logger.error(f"Errore in manage_coach_settings: {str(e)}", exc_info=True)
+        logger.error(f"Errore in get_coach_settings: {str(e)}", exc_info=True)
+        return jsonify({"error": str(e)}), 500
+        
+@app.route("/api/coach/settings", methods=["POST"])
+def save_coach_settings():
+    try:
+        data = request.json
+        coach_id = data.get("coach_id")
+        clusters_payload = data.get("clusters", []) # Lista di oggetti con cluster (nome) e selected (bool)
+
+        if not coach_id:
+            return jsonify({"error": "ID coach mancante"}), 400
+
+        # 1. Rimuoviamo tutte le associazioni attuali per questo coach
+        supabase.table("coach_clusters").delete().eq("coach_id", coach_id).execute()
+
+        # 2. Per ogni cluster che l'utente ha spuntato, troviamo l'ID corrispondente nella tabella 'clusters' e lo inseriamo
+        new_inserts = []
+        for item in clusters_payload:
+            if item.get("selected"):
+                cluster_name = item.get("cluster")
+                # Cerca l'ID del cluster dal nome
+                match = supabase.table("clusters").select("id").eq("name", cluster_name).execute()
+                if match.data:
+                    cluster_id = match.data[0]["id"]
+                    new_inserts.append({
+                        "coach_id": coach_id,
+                        "cluster_id": cluster_id
+                    })
+
+        if new_inserts:
+            supabase.table("coach_clusters").insert(new_inserts).execute()
+
+        return jsonify({"success": True, "message": "Impostazioni salvate con successo!"})
+    except Exception as e:
+        logger.error(f"Errore in save_coach_settings: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
 # --- ENDPOINT 4: Ri-analisi di TUTTI i Check-in del Coach con i soli Cluster Attivi ---
