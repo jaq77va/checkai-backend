@@ -116,7 +116,7 @@ def admin_update_coach_clusters():
 # ------------------------ FUNZIONE DI SUPPORTO CON LOGGING DEI CLUSTER ------------------------
 def get_coach_prompt(coach_id):
     clusters = []
-    logger.info(f"==> [AI PROMPT] Inizio  recupero cluster associati per coach_id: {coach_id}")
+    logger.info(f"==> [AI PROMPT] Inizio  recupero cluster associati per coach_id : {coach_id}")
     
     try:
         # Interroga la tabella di join coach_clusters unendola alla tabella master clusters per estrarre i nomi
