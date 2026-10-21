@@ -93,7 +93,7 @@ def admin_delete_cluster(cluster_id):
 
 # ------------------------ 4. AGGIORNA ASSOCIAZIONI COACH <-> CLUSTER --------------------------
 @app.route("/api/admin/coach-clusters", methods=["POST"])
-def ():
+def admin_update_coach_clusters():
     try:
         data = request.json
         coach_id = data.get("coach_id")
