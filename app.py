@@ -29,7 +29,7 @@ def home():
     return jsonify({
         "status": "online",
         "service": "SportDataSense CheckAI API Engine",
-        "version": "2.2.1"
+        "version": "2.2.2"
     })
 
 # ------------------------ 1. OTTIENI TUTTI I DATI ADMIN (Cluster + Coach con relative associazioni) ------------------------
@@ -116,7 +116,7 @@ def admin_update_coach_clusters():
 # ------------------------ FUNZIONE DI SUPPORTO CON LOGGING DEI CLUSTER ------------------------
 def get_coach_prompt(coach_id):
     clusters = []
-    logger.info(f"==> [AI PROMPT] Inizio  recupero cluster associati per coach_id : {coach_id}")
+    logger.info(f"==> [AI PROMPT] Inizio recupero cluster associati per coach_id : {coach_id}")
     
     try:
         # Interroga la tabella di join coach_clusters unendola alla tabella master clusters per estrarre i nomi
@@ -243,7 +243,7 @@ def upload_audio():
         logger.error(f"Errore critico durante l'upload: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# --- ENDPOINT 2: Lista Check-in per il Coach ---
+# --- ENDPOINT: Lista Check-in per il Coach (Aggiornato con Join esplicita su clients_id) ---
 @app.route("/api/coach/checkins", methods=["GET"])
 def get_coach_checkins():
     coach_id = request.args.get("coach_id")
@@ -252,8 +252,9 @@ def get_coach_checkins():
         return jsonify({"error": "Parametro coach_id mancante"}), 400
 
     try:
+        # Join corretta utilizzando clients:clients_id per recuperare id e name del cliente
         response = supabase.table("checkins") \
-            .select("*, clients(name)") \
+            .select("*, clients:clients_id(id, name)") \
             .eq("coach_id", coach_id) \
             .order("created_at", desc=True) \
             .execute()
@@ -264,7 +265,7 @@ def get_coach_checkins():
         logger.error(f"Errore get_coach_checkins: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# --- ENDPOINT 4: Ri-analisi di TUTTI i Check-in del Coach con i soli Cluster Attivi ---
+# --- ENDPOINT: Ri-analisi di TUTTI i Check-in del Coach con i soli Cluster Attivi ---
 @app.route("/api/coach/reanalyze", methods=["POST"])
 def reanalyze_checkin():
     req_data = request.get_json(silent=True) or {}
