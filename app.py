@@ -243,7 +243,6 @@ def upload_audio():
         logger.error(f"Errore critico durante l'upload: {str(e)}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
-# --- ENDPOINT: Lista Check-in per il Coach (Aggiornato con Join esplicita su clients_id) ---
 @app.route("/api/coach/checkins", methods=["GET"])
 def get_coach_checkins():
     coach_id = request.args.get("coach_id")
@@ -252,9 +251,9 @@ def get_coach_checkins():
         return jsonify({"error": "Parametro coach_id mancante"}), 400
 
     try:
-        # Join corretta utilizzando clients:clients_id per recuperare id e name del cliente
+        # Corretto da clients:clients_id a clients(id, name) sfruttando la foreign key client_id
         response = supabase.table("checkins") \
-            .select("*, clients:clients_id(id, name)") \
+            .select("*, clients(id, name)") \
             .eq("coach_id", coach_id) \
             .order("created_at", desc=True) \
             .execute()
