@@ -149,8 +149,8 @@ def get_coach_prompt(coach_id):
     1. Analizza l'audio del cliente valutando ESCLUSIVAMENTE ed UNICAMENTE i seguenti punti richiesti dal coach:
     {clusters_text}
     
-    2. FORMATTAZIONE DEL TESTO: Per ogni punto, usa esattamente questo formato in Markdown mettendo in **grassetto** il nome del cluster e rimuovendo gli * e corsivo per eventuali stati (es. *Positivo* / *Negativo*):
-       - **Nome Cluster**: [Stato/Valutazione] - Descrizione dettagliata...
+    2. FORMATTAZIONE DEL TESTO: Per ogni punto, usa esattamente questo formato in Markdown mettendo in **grassetto** il nome del cluster e in corsivo l'eventuale stato (es. *Positivo* / *Negativo*):
+   - **Nome Cluster**: [Stato/Valutazione] - Descrizione dettagliata...
     
     3. DIVIETO ASSOLUTO: NON aggiungere altri argomenti o categorie non presenti nell'elenco sopra.
     4. Se nell'audio non ci sono informazioni relative a uno dei punti richiesti, scrivi: "*Dato non pervenuto*".
